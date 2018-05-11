@@ -19,6 +19,7 @@ def state_determiner(token, attributes):
 
 def get_object_to_search(token, attributes):
     attributes["object_of_search"] = token.lemma_
+    attributes["object_of_search_value"] = token.text
     if token.tag_ == "NN":
         attributes["object_of_search_qty"] = "singular"
     else:
@@ -109,13 +110,17 @@ def process_measurement(token, attributes):
 def process_where_question(token, attributes):
     attributes["question"] = token.text
 
+def process_search_criteria_be(token, attributes):
+    pass
+
+
 
 states = {
             #wh-questions
             start_state: [
                             (lambda token: token.tag_ == "WP", handle_question),
                             (lambda token: token.tag_ == "WDT", handle_question),
-                            (lambda token: token.tag_ == "VB", handle_command),
+                            (lambda token: token.pos_ == "VERB", handle_command),
                             (lambda token: token.text in ['list'], handle_command),
                             (lambda token: token.tag_ == "WRB", process_where_question),
                          ],
@@ -135,21 +140,28 @@ states = {
                 (lambda token: token.pos_ == "NOUN", get_object_to_search),
                 ],
             get_object_to_search: [
-                                    (lambda token: token.pos_ == "VERB" and token.lemma_ != "be", get_search_criteria),
                                     (lambda token: token.lemma_ == "be", process_wh_be),
+                                    (lambda token: token.pos_ == "VERB" and token.lemma_ != "be", get_search_criteria),
                                     (lambda token: token.dep_ == "prep", state_location),
                                     (lambda token: token.tag_ == "WP$", process_wh_criteria),
                                     (lambda token: token.tag_ == "WDT", process_wh_det_criteria),
                                     (lambda token: token.tag_ == "JJR", process_adj_criteria),
                                   ],
             get_search_criteria: [
+                                    (lambda token: token.dep_ == "prep", state_search_criteria_value),
+                                    (lambda token: token.lemma_ == "be", process_search_criteria_be),
                                     (lambda token: True, state_search_criteria_value),
                                     #(lambda token: token.pos_ == "NOUN", state_search_criteria_value),
                                     #(lambda token: token.pos_ == "PROPN", state_search_criteria_value),
                                  ],
+            process_search_criteria_be: [
+                                    (lambda token: token.dep_ == "nummod", process_size),
+                ],
             state_search_criteria_value : [
                                             (lambda token: token.tag_ == "CC", process_conjunction),
                                             (lambda token: token.tag_ == "IN", state_location),
+                                            (lambda token: token.tag_ == "IN", state_location),
+                                            (lambda token: token.pos_ == "NOUN", process_conjuncted_criteria),
                                         ],
             state_location : [
                               (lambda token: token.pos_ == "NOUN", state_location_value),
@@ -173,15 +185,19 @@ states = {
                         (lambda token: token.tag_ == "WDT", process_wh_det_criteria)
                 ],
             process_wh_criteria : [
+                        (lambda token: token.pos_ == "NOUN", get_search_criteria),
                 ],
             process_wh_det_criteria : [
                     (lambda token: token.lemma_ == "be", process_wh_be),
+                    (lambda token: token.pos_ == "VERB" and token.lemma_ != "be", get_search_criteria),
                 ],
             process_wh_be: [
+                    (lambda token: token.dep_ == "nsubj", get_object_to_search),
                     (lambda token: token.tag_ == "JJR", process_adj_criteria),
                     (lambda token: token.pos_ == "VERB" and token.dep_ == "relcl", get_search_criteria),
                     (lambda token: token.pos_ == "ADP" and token.dep_ == "prep", state_location),
-                    (lambda token: token.pos_ == "NOUN", get_object_to_search),
+                    (lambda token: token.pos_ == "NOUN" or token.pos_ == "PROPN", get_object_to_search),
+                    (lambda token: token.tag_ == "FW", get_object_to_search),
                 ],
             process_adj_criteria: [
                     (lambda token: token.dep_ == "prep" and token.pos_ == "ADP", process_degree),
@@ -191,24 +207,45 @@ states = {
                     (lambda token: token.dep_ == "nummod", process_size)
                     ],
             process_size: [
-                    (lambda token: token.dep_ == "pobj", process_measurement)
+                    (lambda token: token.dep_ == "pobj", process_measurement),
+                    (lambda token: token.dep_ == "attr", process_measurement)
                     ],
             process_measurement: [
                     ],
 
          }
 
+def do_analysis(string, nlp):
+    attributes = analyze(string, nlp)
+    print(attributes)
+    command_string = get_command_string(attributes)
+
+    if command_string is not None:
+        print("-------------------------------------")
+        print("\n\n\n\n\n\n\n")
+        print("executing command = %s " % command_string)
+        print(subprocess.getoutput(command_string))
+
 
 def main():
     print("loading nlp stuff")
+    nlp = spacy.load('en_core_web_md')
+    print("done loading nlp stuff")
     string = ""
-    for arg in sys.argv[1::]:
-        string += arg
-        string += " "
-    nlp = spacy.load('en_core_web_sm')
+    if(len(sys.argv) > 1):
+        for arg in sys.argv[1::]:
+            string += arg
+            string += " "
+    else:
+        print("entering subsequent text entry mode.")
+        string = input("please input a command/query:")
+
+        while string != "quit":
+            do_analysis(string, nlp)
+            string = input("please input a command/query:")
+
     #analyze(input("input command here:"), nlp)
     #analyze("show me all files", nlp)
-    print("-------------------------------------")
     #attributes = analyze("show all files in this directory named bla", nlp)
     #print(get_command_string(attributes, True))
     #analyze("list all files", nlp)
@@ -216,15 +253,7 @@ def main():
     #print(get_command_string(attributes, True))
 
     #attributes = analyze("list all files named larger in pycharm", nlp)
-    attributes = analyze(string, nlp)
-    print(attributes)
-    command_string = get_command_string(attributes)
-
-    if command_string is not None:
-        print("\n\n\n\n\n\n\n")
-        print("executing command = %s " % command_string)
-        print(subprocess.getoutput(command_string))
-
+    
     #analyze("show all files which are named filename and larger than 3 kilobytes", nlp)
     #analyze("what file in hello contains bla.txt", nlp)
     #analyze("what file in this directory containing bla.txt", nlp)
@@ -335,7 +364,7 @@ def process_find_locate_command(attributes, name):
     command = "find"
     command += get_location(attributes)
     command += " -name "
-    command += "\"%s\"" % attributes["object_of_search"]
+    command += "\"%s\"" % attributes["object_of_search_value"]
     return command
 
 def process_quantity(criteria):
@@ -366,7 +395,9 @@ def get_command_string(attributes):
 
     if ("command" in attributes and attributes["command"] in ["show", "give", "list"]) or  \
        ("question" in attributes and attributes["question"] in ["what", "which", "where"]):
-            if "criteria" in attributes:
+            if "question" in attributes and attributes["question"] == "where" and attributes["object_of_search"] != "":
+                return process_find_locate_command(attributes, "locate")
+            elif "criteria" in attributes:
                 if "contain" in attributes["criteria"]:
                     if attributes["object_of_search"] == "directory":
                         print("Sorry, I can't query directories recursively.")
@@ -380,8 +411,15 @@ def get_command_string(attributes):
                     return process_find_size_command(attributes, "large")
                 elif "small" in attributes["criteria"]:
                     return process_find_size_command(attributes, "small")
+            elif "command" in attributes and attributes["command"] in ["show", "list"]:
+                return process_ls_command(attributes, "")
             elif "location" in attributes:
-                    return process_ls_command(attributes, "")
+                return process_ls_command(attributes, "")
+            else:
+                print("sorry, i don't support this yet!")
+
+    else:
+        print("sorry, i don't support this yet!")
 
 
 def get_location(attributes):
@@ -393,6 +431,11 @@ def get_location(attributes):
                 location = " ."
         else:
             location = " %s" % location_info["value"]
+    elif "criteria" in attributes and "locate" in attributes["criteria"]:
+        for value in attributes["criteria"]["locate"]["value"]:
+            print(value)
+            if value != "in":
+                location = " %s" % value
     else:
         location = " ."
     return location
