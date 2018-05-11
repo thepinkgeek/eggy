@@ -1,5 +1,9 @@
+#!/usr/bin/env python
+
 import spacy
 import spacy.symbols as symbols
+import subprocess
+import sys
 
 def start_state(token, attributes):
     pass
@@ -14,7 +18,7 @@ def state_determiner(token, attributes):
     pass
 
 def get_object_to_search(token, attributes):
-    attributes["object_of_search"] = token
+    attributes["object_of_search"] = token.lemma_
     if token.tag_ == "NN":
         attributes["object_of_search_qty"] = "singular"
     else:
@@ -102,6 +106,10 @@ def process_size(token, attributes):
 def process_measurement(token, attributes):
     attributes["criteria"][attributes["current_criteria"]]["value"][0]["quantity"] = token.text
 
+def process_where_question(token, attributes):
+    attributes["question"] = token.text
+
+
 states = {
             #wh-questions
             start_state: [
@@ -109,16 +117,22 @@ states = {
                             (lambda token: token.tag_ == "WDT", handle_question),
                             (lambda token: token.tag_ == "VB", handle_command),
                             (lambda token: token.text in ['list'], handle_command),
+                            (lambda token: token.tag_ == "WRB", process_where_question),
                          ],
+            process_where_question: [
+                    (lambda token: token.pos_ == "ADP" and token.dep_ == "prep", state_location),
+                    (lambda token: token.lemma_ == "be", process_wh_be),
+                ],
             handle_question: [ 
                                 (lambda token: token.pos_ == "NOUN", get_object_to_search),
+                                (lambda token: token.tag_ == "VBZ" and token.lemma_ == "file" , get_object_to_search),
                              ],
             handle_command: [
                                 (lambda token: token.pos_ == "NOUN", get_object_to_search),
                                 (lambda token: token.pos_ == "DET", state_determiner),
                 ],
             state_determiner: [
-                                (lambda token: token.pos_ == "NOUN", get_object_to_search),
+                (lambda token: token.pos_ == "NOUN", get_object_to_search),
                 ],
             get_object_to_search: [
                                     (lambda token: token.pos_ == "VERB" and token.lemma_ != "be", get_search_criteria),
@@ -142,7 +156,8 @@ states = {
                               (lambda token: token.pos_ == "DET", process_location_determiner),
                            ],
             state_location_value : [
-                                        (lambda token: token.pos_ == "VERB", get_search_criteria),
+                                        (lambda token: token.pos_ == "VERB" and token.lemma_ != "be", get_search_criteria),
+                                        (lambda token: token.lemma_ == "be", process_wh_be),
                                         (lambda token: token.tag_ == "WP$", process_wh_criteria),
                                         (lambda token: token.tag_ == "WDT", process_wh_det_criteria)
                                    ],
@@ -165,6 +180,8 @@ states = {
             process_wh_be: [
                     (lambda token: token.tag_ == "JJR", process_adj_criteria),
                     (lambda token: token.pos_ == "VERB" and token.dep_ == "relcl", get_search_criteria),
+                    (lambda token: token.pos_ == "ADP" and token.dep_ == "prep", state_location),
+                    (lambda token: token.pos_ == "NOUN", get_object_to_search),
                 ],
             process_adj_criteria: [
                     (lambda token: token.dep_ == "prep" and token.pos_ == "ADP", process_degree),
@@ -183,6 +200,11 @@ states = {
 
 
 def main():
+    print("loading nlp stuff")
+    string = ""
+    for arg in sys.argv[1::]:
+        string += arg
+        string += " "
     nlp = spacy.load('en_core_web_sm')
     #analyze(input("input command here:"), nlp)
     #analyze("show me all files", nlp)
@@ -193,11 +215,17 @@ def main():
     #attributes = analyze("show all files containing hi and dada", nlp)
     #print(get_command_string(attributes, True))
 
-    attributes = analyze("list all files named larger in pycharm", nlp)
+    #attributes = analyze("list all files named larger in pycharm", nlp)
+    attributes = analyze(string, nlp)
     print(attributes)
-    print(get_command_string(attributes))
+    command_string = get_command_string(attributes)
+
+    if command_string is not None:
+        print("\n\n\n\n\n\n\n")
+        print("executing command = %s " % command_string)
+        print(subprocess.getoutput(command_string))
+
     #analyze("show all files which are named filename and larger than 3 kilobytes", nlp)
-    #analyze("what file contains bla.txt", nlp)
     #analyze("what file in hello contains bla.txt", nlp)
     #analyze("what file in this directory containing bla.txt", nlp)
     #analyze("what files contain bla and foo which are larger than 3 kilobytes", nlp)
@@ -208,13 +236,15 @@ def main():
     #analyze("show all files", nlp)
     
 def analyze(the_text, nlp):
+    print("analyzing text %s = " % the_text)
     text = (the_text)
     doc = nlp(text)
     current_state = start_state
     attributes = {"isComplete" : True}
 
     for token in doc:
-        print("token = %s, lemma = %s, norm = %s, pos = %s, tag = %s, tag_ = %s, dep = %s" % (token.text, token.lemma_, token.norm_, token.pos_, 
+        print("token = %s, lemma = %s, norm = %s, pos = %s, tag = %s, tag_ = %s, dep = %s" % \
+                (token.text, token.lemma_, token.norm_, token.pos_, 
             token.tag_, spacy.explain(token.tag_), token.dep_))
         
         next_state = None
@@ -239,73 +269,120 @@ def analyze(the_text, nlp):
 
     return attributes
 
-    """
-    print("***********************")
-    for token in doc:
-        print("###############################")
-        print("token = %s, lemma = %s, norm = %s, pos = %s, tag = %s, tag_ = %s, dep = %s" % (token.text, token.lemma_, token.norm_, token.pos_, 
-            token.tag_, spacy.explain(token.tag_), token.dep_))
-        print(spacy.explain(token.tag_))
-        for child in token.children:
-            print(child.text, child.dep_)
-        print("###############################")
+def process_ack_command(attributes, criteria):
+    command = "ack \'"
+    info = attributes["criteria"][criteria]
+    if info["degree"] == "equals":
+        for i in range(0, len(info["value"])):
+            command = command + "%s" % info["value"][i]
 
-        if token.pos == symbols.VERB:
-            if token.tag_ == "VB":
-                print("command: %s" % token.text)
-                attributes["command"] = token.text
-                attributes["command_obj"] = get_direct_object(token)
-            else:
-                attributes["criteria"] = {}
-                attributes["criteria"][token.text] = get_direct_object(token)
-        if token.pos == symbols.ADJ:
-            pass
+            if i != len(info['value']) - 1:
+                command += "|"
 
-    print(attributes)
-    print("*****************")
-    """
-        
+    command += '\''
+    command += " %s" % get_location(attributes)
+    return command
+
+def process_ls_command(attributes, criteria):
+    object_of_search = attributes["object_of_search"]
+    print("object_of_search = %s" % object_of_search)
+    command = "ls -l"
+    command += get_location(attributes)
+
+    command += "| egrep"
+    if object_of_search == "file":
+        command += " -v"
+    elif object_of_search == "directory":
+        pass
+    else:
+        command += " -v"
+    command += " \'^d\'"
+
+    if "criteria" in attributes and criteria != "":
+        info = attributes["criteria"][criteria]
+    
+        if info["degree"] == "equals":
+            for value in info["value"]:
+                command = command + " | grep %s" % value
+
+    return command
+
+
+def process_find_size_command(attributes, name):
+    object_of_search = attributes["object_of_search"]
+    command = "find"
+    command += get_location(attributes)
+
+    if object_of_search == "file":
+        command += " -type f"
+    elif object_of_search == "directory":
+        command += " -type d"
+    else:
+        command += " -type f"
+
+    if name == "large":
+        command += " -size +"
+    elif name == "small":
+        command += " -size -"
+    else:
+        command += " -size +"
+
+    command += process_quantity(attributes["criteria"][name])
+    command += "| xargs du -sh"
+    return command
+
+def process_find_locate_command(attributes, name):
+    command = "find"
+    command += get_location(attributes)
+    command += " -name "
+    command += "\"%s\"" % attributes["object_of_search"]
+    return command
+
+def process_quantity(criteria):
+    value = criteria["value"][0]["value"]
+    if "quantity" in criteria["value"][0]:
+        quantity = criteria["value"][0]["quantity"].lower()
+    else:
+        quantity = ""
+
+    if quantity == "bytes":
+        return "%sc " % value
+    elif quantity == "words":
+        return "%sw " % value
+    elif quantity == "kilobytes":
+        return "%sk " % value
+    elif quantity == "megabytes":
+        return "%sM " % value
+    elif quantity == "gigabytes":
+        return "%sG " % value
+    else:
+        return value
+
 
 def get_command_string(attributes):
     if not attributes["isComplete"]:
         print("sorry, i can't process your request") 
         return None
 
-    if "command" in attributes:
-        command = attributes["command"]
+    if ("command" in attributes and attributes["command"] in ["show", "give", "list"]) or  \
+       ("question" in attributes and attributes["question"] in ["what", "which", "where"]):
+            if "criteria" in attributes:
+                if "contain" in attributes["criteria"]:
+                    if attributes["object_of_search"] == "directory":
+                        print("Sorry, I can't query directories recursively.")
+                        return None
+                    return process_ack_command(attributes, "contain")
+                elif "name" in attributes["criteria"]:
+                    return process_ls_command(attributes, "name")
+                elif "locate" in attributes["criteria"]:
+                    return process_find_locate_command(attributes, "locate")
+                elif "large" in attributes["criteria"]:
+                    return process_find_size_command(attributes, "large")
+                elif "small" in attributes["criteria"]:
+                    return process_find_size_command(attributes, "small")
+            elif "location" in attributes:
+                    return process_ls_command(attributes, "")
 
-        if command in ["show", "give", "list"]:
-            for criterium, info in attributes["criteria"].items():
-                if criterium == "contain":
-                    command = "ack \'"
-
-                    if info["degree"] == "equals":
-                        for i in range(0, len(info["value"])):
-                            command = command + "%s" % info["value"][i]
-
-                            if i != len(info['value']) - 1:
-                                command += "|"
-
-                        command += '\''
-
-                    command += " %s" % get_location(attributes)
-
-                
-                if criterium == "name":
-                    command = "ls"
-                    command += get_location(attributes)
-
-                    if info["degree"] == "equals":
-                        for value in info["value"]:
-                            command = command + " | grep %s" % value
-
-            return command
-
-    elif "question" in attributes:
-        question = attributes["question"]
-
-        if question == "what" or question == "which":
-            pass
 
 def get_location(attributes):
     location = ""
@@ -316,17 +393,9 @@ def get_location(attributes):
                 location = " ."
         else:
             location = " %s" % location_info["value"]
+    else:
+        location = " ."
     return location
-
-
-def get_direct_object(token):
-    for child in token.children:
-        if child.dep == symbols.dobj:
-            print("the thing to look for is: %s" % child.text)
-            print(child.text, child.pos_, child.dep_)
-            return child
-    return None
-
 
 if __name__ == "__main__":
     main()
