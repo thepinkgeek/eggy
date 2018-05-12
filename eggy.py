@@ -113,6 +113,20 @@ def process_where_question(token, attributes):
 def process_search_criteria_be(token, attributes):
     pass
 
+def process_search_criteria_owner(token, attributes):
+    if token.text == "my":
+        if "user" not in attributes:
+            attributes["current_owner_attr"] = "user"
+            attributes["user"] = []
+    else:
+        if "other_user" not in attributes:
+            attributes["current_owner_attr"] = "other"
+            attributes["other"] = []
+
+
+def process_owned_criteria(token, attributes):
+    attributes[attributes["current_owner_attr"]].append(token.text)
+
 
 
 states = {
@@ -131,6 +145,7 @@ states = {
             handle_question: [ 
                                 (lambda token: token.pos_ == "NOUN", get_object_to_search),
                                 (lambda token: token.tag_ == "VBZ" and token.lemma_ == "file" , get_object_to_search),
+                                (lambda token: token.lemma_ == "be", process_wh_be),
                              ],
             handle_command: [
                                 (lambda token: token.pos_ == "NOUN", get_object_to_search),
@@ -160,8 +175,7 @@ states = {
             state_search_criteria_value : [
                                             (lambda token: token.tag_ == "CC", process_conjunction),
                                             (lambda token: token.tag_ == "IN", state_location),
-                                            (lambda token: token.tag_ == "IN", state_location),
-                                            (lambda token: token.pos_ == "NOUN", process_conjuncted_criteria),
+                                            (lambda token: token.pos_ == "NOUN" or token.pos_ == "PROPN", process_conjuncted_criteria),
                                         ],
             state_location : [
                               (lambda token: token.pos_ == "NOUN", state_location_value),
@@ -199,7 +213,13 @@ states = {
                     (lambda token: token.pos_ == "ADP" and token.dep_ == "prep", state_location),
                     (lambda token: token.pos_ == "NOUN" or token.pos_ == "PROPN", get_object_to_search),
                     (lambda token: token.tag_ == "FW", get_object_to_search),
+                    (lambda token: token.tag_ == "PRP$", process_search_criteria_owner),
                 ],
+            process_search_criteria_owner: [
+                    (lambda token: token.dep_ == "nsubj", process_owned_criteria)
+                    ],
+            process_owned_criteria: [
+                    ],
             process_adj_criteria: [
                     (lambda token: token.dep_ == "prep" and token.pos_ == "ADP", process_degree),
                     (lambda token: token.dep_ == "quantmod" and token.pos_ == "ADP", process_degree)
@@ -230,13 +250,14 @@ def do_analysis(string, nlp):
 
 def main():
     print("loading nlp stuff")
-    nlp = spacy.load('en_core_web_md')
+    nlp = spacy.load('en_core_web_sm')
     print("done loading nlp stuff")
     string = ""
     if(len(sys.argv) > 1):
         for arg in sys.argv[1::]:
             string += arg
             string += " "
+        do_analysis(string, nlp)
     else:
         print("entering subsequent text entry mode.")
         string = input("please input a command/query:")
@@ -388,6 +409,12 @@ def process_quantity(criteria):
     else:
         return value
 
+def process_user_info(attributes):
+    command = ""
+    for user_attr in attributes["user"]:
+        if user_attr == "name":
+            command = "whoami"
+    return command
 
 def get_command_string(attributes):
     if not attributes["isComplete"]:
@@ -416,6 +443,8 @@ def get_command_string(attributes):
                 return process_ls_command(attributes, "")
             elif "location" in attributes:
                 return process_ls_command(attributes, "")
+            elif "user" in attributes:
+                return process_user_info(attributes)
             else:
                 print("sorry, i don't support this yet!")
 
