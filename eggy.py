@@ -171,7 +171,8 @@ states = {
                                         (lambda token: token.pos_ == "VERB" and token.lemma_ != "be", get_search_criteria),
                                         (lambda token: token.lemma_ == "be", process_wh_be),
                                         (lambda token: token.tag_ == "WP$", process_wh_criteria),
-                                        (lambda token: token.tag_ == "WDT", process_wh_det_criteria)
+                                        (lambda token: token.tag_ == "WDT", process_wh_det_criteria),
+                                        (lambda token: token.tag_ == "JJR", process_adj_criteria),
                                    ],
             process_location_determiner : [
                                             (lambda token: token.pos_ == "NOUN", state_location_value),
